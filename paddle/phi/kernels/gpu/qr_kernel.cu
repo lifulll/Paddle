@@ -12,13 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef PADDLE_WITH_HIP  // HIP not support cusolver
-
+#ifdef PADDLE_WITH_HIP
+#include "paddle/phi/backends/dynload/rocsolver.h"
+#else
+#include "paddle/phi/backends/dynload/cusolver.h"
+#endif
 #include <thrust/device_vector.h>
 #include <algorithm>
 #include <vector>
 
-#include "paddle/phi/backends/dynload/cusolver.h"
 #include "paddle/phi/backends/gpu/gpu_context.h"
 #include "paddle/phi/common/memory_utils.h"
 #include "paddle/phi/core/enforce.h"
@@ -178,6 +180,53 @@ void QrKernel(const Context& ctx,
   }
 }
 
+#ifdef PADDLE_WITH_HIP
+#define FUNC_WITH_TYPES(m) m(float, s) m(double, d)
+#define GEQRF_BATCH_INSTANCE(T, C)                              \
+  template <>                                                   \
+  void BatchedGeqrf<GPUContext, T>(const GPUContext& dev_ctx,   \
+                                   int batch_size,              \
+                                   int m,                       \
+                                   int n,                       \
+                                   T* a,                        \
+                                   int lda,                     \
+                                   T* tau,                      \
+                                   int a_stride,                \
+                                   int tau_stride) {            \
+    auto handle = dev_ctx.cusolver_dn_handle();                 \
+    for (int i = 0; i < batch_size; ++i) {                      \
+      T* a_working_ptr = &a[i * a_stride];                      \
+      T* tau_working_ptr = &tau[i * tau_stride];                \
+      PADDLE_ENFORCE_GPU_SUCCESS(dynload::rocsolver_##C##geqrf( \
+          handle, m, n, a_working_ptr, lda, tau_working_ptr));  \
+    }                                                           \
+  }
+
+FUNC_WITH_TYPES(GEQRF_BATCH_INSTANCE);
+
+#define ORGQR_BATCH_INSTANCE(T, C)                                \
+  template <>                                                     \
+  void BatchedOrgqr<GPUContext, T>(const GPUContext& dev_ctx,     \
+                                   int batch_size,                \
+                                   int m,                         \
+                                   int n,                         \
+                                   int k,                         \
+                                   T* a,                          \
+                                   int lda,                       \
+                                   T* tau,                        \
+                                   int a_stride,                  \
+                                   int tau_stride) {              \
+    auto handle = dev_ctx.cusolver_dn_handle();                   \
+    for (int i = 0; i < batch_size; ++i) {                        \
+      T* a_working_ptr = &a[i * a_stride];                        \
+      T* tau_working_ptr = &tau[i * tau_stride];                  \
+      PADDLE_ENFORCE_GPU_SUCCESS(dynload::rocsolver_##C##orgqr(   \
+          handle, m, n, k, a_working_ptr, lda, tau_working_ptr)); \
+    }                                                             \
+  }
+
+FUNC_WITH_TYPES(ORGQR_BATCH_INSTANCE);
+#else
 template <>
 void BatchedGeqrf<GPUContext, float>(const GPUContext& dev_ctx,
                                      int batch_size,
@@ -397,14 +446,8 @@ void BatchedOrgqr<GPUContext, double>(const GPUContext& dev_ctx,
             "For batch [%d]: CUSolver QR is not zero. [%d]", i, info_h));
   }
 }
+#endif
 
 }  // namespace phi
 
-PD_REGISTER_KERNEL(qr,  // cuda_only
-                   GPU,
-                   ALL_LAYOUT,
-                   phi::QrKernel,
-                   float,
-                   double) {}
-
-#endif  // not PADDLE_WITH_HIP
+PD_REGISTER_KERNEL(qr, GPU, ALL_LAYOUT, phi::QrKernel, float, double) {}
