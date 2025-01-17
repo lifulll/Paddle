@@ -17,11 +17,9 @@ include(ExternalProject)
 if(WITH_ROCM)
   add_definitions(-DPADDLE_WITH_FLASHATTN)
 
-  set(FA_REPOSITORY https://github.com/PaddlePaddle/flash-attention.git)
-  set(FA_TAG "dcu")
+  set(FLASHATTN_TAG 123456789) # TODO
   set(FLASHATTN_PREFIX_DIR ${THIRD_PARTY_PATH}/flashattn_hip)
   set(FLASHATTN_INSTALL_DIR ${THIRD_PARTY_PATH}/install/flashattn)
-  set(SOURCE_DIR ${PADDLE_SOURCE_DIR}/third_party/flashattn_hip)
 
   set(FLASHATTN_INCLUDE_DIR
       "${FLASHATTN_INSTALL_DIR}/include"
@@ -33,50 +31,87 @@ if(WITH_ROCM)
       "${FLASHATTN_INSTALL_DIR}/lib/libflashattn${CMAKE_SHARED_LIBRARY_SUFFIX}"
       CACHE FILEPATH "flash-attn Library" FORCE)
 
-  set(FLASHATTN_C_FLAGS ${CMAKE_C_FLAGS})
-  set(FLASHATTN_C_FLAGS_DEBUG ${CMAKE_C_FLAGS_DEBUG})
-  set(FLASHATTN_C_FLAGS_RELEASE ${CMAKE_C_FLAGS_RELEASE})
-  set(FLASHATTN_CXX_FLAGS
-      "${CMAKE_CXX_FLAGS} -w -Wno-deprecated-builtins -Wno-deprecated -DNDEBUG -U__HIP_NO_HALF_OPERATORS__ -U__HIP_NO_HALF_CONVERSIONS__ -fPIC -O3 -std=c++17 -D__HIP_PLATFORM_HCC__=1 --offload-arch=gfx928 -D__gfx940__ -mllvm -enable-num-vgprs-512=true"
+  set(BASE_URL
+      "https://xly-devops.bj.bcebos.com/gpups/flash-attention/hip"  # TODO
   )
-  set(FLASHATTN_CXX_FLAGS_RELEASE ${CMAKE_CXX_FLAGS_RELEASE})
-  set(FLASHATTN_CXX_FLAGS_DEBUG ${CMAKE_CXX_FLAGS_DEBUG})
+  set(TAR_FILE_NAME "flashattn_libs_${FLASHATTN_TAG}.tar")
+  set(TAR_FILE_URL "${BASE_URL}/${TAR_FILE_NAME}")
+  set(FA_BUILD_DIR "${FLASHATTN_PREFIX_DIR}/src/extern_flashattn-build/")
+  set(CACHE_TAR_PATH "${FA_BUILD_DIR}/${TAR_FILE_NAME}")
+  set(CACHE_TAR_DIR "${FA_BUILD_DIR}/flashattn_libs_${FLASHATTN_TAG}")
 
-  ExternalProject_Add(
-    extern_flashattn
-    GIT_REPOSITORY ${FA_REPOSITORY}
-    GIT_TAG ${FA_TAG}
-    SOURCE_DIR ${SOURCE_DIR}
-    PREFIX ${FLASHATTN_PREFIX_DIR}
-    UPDATE_COMMAND ""
-    PATCH_COMMAND ""
-    #BUILD_ALWAYS    1
-    CMAKE_ARGS -DCMAKE_CXX_COMPILER=${ROCM_PATH}/bin/hipcc
-               -DAMDGPU_TARGETS=gfx928
-               -DCMAKE_CXX_COMPILER_LAUNCHER=${CCACHE_PATH}
-               -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
-               -DCMAKE_C_FLAGS=${FLASHATTN_C_FLAGS}
-               -DCMAKE_C_FLAGS_DEBUG=${FLASHATTN_C_FLAGS_DEBUG}
-               -DCMAKE_C_FLAGS_RELEASE=${FLASHATTN_C_FLAGS_RELEASE}
-               -DCMAKE_CXX_FLAGS=${FLASHATTN_CXX_FLAGS}
-               -DCMAKE_CXX_FLAGS_RELEASE=${FLASHATTN_CXX_FLAGS_RELEASE}
-               -DCMAKE_CXX_FLAGS_DEBUG=${FLASHATTN_CXX_FLAGS_DEBUG}
-               -DCMAKE_INSTALL_PREFIX=${FLASHATTN_INSTALL_DIR}
-               -DWITH_GPU=${WITH_GPU}
-               -DCMAKE_CUDA_COMPILER=${CMAKE_CUDA_COMPILER}
-               -DWITH_ROCM=${WITH_ROCM}
-               -DWITH_OMP=${USE_OMP}
-               -DBUILD_SHARED=ON
-               -DCMAKE_POSITION_INDEPENDENT_CODE=ON
-               -DCMAKE_BUILD_TYPE=${THIRD_PARTY_BUILD_TYPE}
-               -DCMAKE_JOB_POOL_COMPILE:STRING=compile
-               -DCMAKE_JOB_POOLS:STRING=compile=4
-               ${EXTERNAL_OPTIONAL_ARGS}
-    CMAKE_CACHE_ARGS
-      -DCMAKE_BUILD_TYPE:STRING=${THIRD_PARTY_BUILD_TYPE}
-      -DCMAKE_POSITION_INDEPENDENT_CODE:BOOL=ON
-      -DCMAKE_INSTALL_PREFIX:PATH=${FLASHATTN_INSTALL_DIR}
-    BUILD_BYPRODUCTS ${FLASHATTN_LIBRARIES})
+  #==================================
+  message(STATUS "Copy /home/famask/flashattn_libs_${FLASHATTN_TAG}.tar to ${FA_BUILD_DIR}")
+  file(COPY "/home/famask/flashattn_libs_${FLASHATTN_TAG}.tar" DESTINATION "${FA_BUILD_DIR}")
+  #==================================
+
+  #message(STATUS "Downloading ${TAR_FILE_URL} to ${CACHE_TAR_PATH}")
+  # file(
+  #     DOWNLOAD "${TAR_FILE_URL}" "${FA_BUILD_DIR}"
+  #     STATUS DOWNLOAD_STATUS
+  #     LOG DOWNLOAD_LOG)
+  # list(GET DOWNLOAD_STATUS 0 DOWNLOAD_RESULT)
+  set(DOWNLOAD_RESULT 0)
+  
+  if(DOWNLOAD_RESULT EQUAL 0)
+    message(STATUS "Download Successful")
+    execute_process(
+      COMMAND ${CMAKE_COMMAND} -E tar xf ${CACHE_TAR_PATH}
+      WORKING_DIRECTORY ${FA_BUILD_DIR}
+      RESULT_VARIABLE TAR_RESULT)
+
+    if(NOT TAR_RESULT EQUAL 0)
+      message(FATAL_ERROR "Failed to extract ${CACHE_TAR_PATH}")
+    endif()
+
+    file(STRINGS ${CACHE_TAR_DIR}/MD5.txt FILE_MD5)
+    string(STRIP ${FILE_MD5} FILE_MD5)
+    file(MD5 ${CACHE_TAR_DIR}/fa_libs.tar FILE_MD5_ACTUAL)
+    message(STATUS "Expected MD5: ${FILE_MD5}")
+    message(STATUS "Actual MD5:   ${FILE_MD5_ACTUAL}")
+
+    if(NOT "${FILE_MD5}" STREQUAL "${FILE_MD5_ACTUAL}")
+      message(
+        FATAL_ERROR "MD5 checksum mismatch! The download may be corrupted.")
+    else()
+      message(STATUS "MD5 checksum verified successfully.")
+    endif()
+
+    execute_process(
+      COMMAND ${CMAKE_COMMAND} -E tar xf ${CACHE_TAR_DIR}/fa_libs.tar
+      WORKING_DIRECTORY ${CACHE_TAR_DIR}
+      RESULT_VARIABLE TAR_RESULT)
+
+    if(NOT TAR_RESULT EQUAL 0)
+      message(FATAL_ERROR "Failed to extract ${CACHE_TAR_PATH}/fa_libs.tar")
+    endif()
+
+    file(COPY "${CACHE_TAR_DIR}/fa_libs/flash_attn.h" DESTINATION "${FLASHATTN_INCLUDE_DIR}")
+    file(COPY "${CACHE_TAR_DIR}/fa_libs/libflashattn.so" DESTINATION "${FA_BUILD_DIR}")
+    file(COPY "${CACHE_TAR_DIR}/fa_libs/libflashattn.so" DESTINATION "${FLASHATTN_LIB_DIR}")
+
+    file(REMOVE_RECURSE ${CACHE_TAR_DIR})
+    message(STATUS "Extraction completed in ${FA_BUILD_DIR}")
+
+  elseif(DOWNLOAD_RESULT EQUAL 6)
+    message(
+      FATAL_ERROR
+        "Could not resolve host. The given remote host was not resolvable.")
+  elseif(DOWNLOAD_RESULT EQUAL 7)
+    message(FATAL_ERROR "Failed to connect to host.")
+  elseif(DOWNLOAD_RESULT EQUAL 22)
+    message(
+      FATAL_ERROR
+        "HTTP page not retrieved. The requested URL was not found or a server returned a 4xx (client error) or 5xx (server error) response."
+    )
+  elseif(DOWNLOAD_RESULT EQUAL 28)
+    message(
+      FATAL_ERROR
+        "Operation timeout. The specified time-out period was reached according to the conditions."
+    )
+  else()
+    message(FATAL_ERROR "An error occurred. Error code: ${DOWNLOAD_RESULT}")
+  endif()
 else()
 
   add_definitions(-DPADDLE_WITH_FLASHATTN)
@@ -315,4 +350,6 @@ include_directories(${FLASHATTN_INCLUDE_DIR})
 
 add_library(flashattn INTERFACE)
 #set_property(TARGET flashattn PROPERTY IMPORTED_LOCATION ${FLASHATTN_LIBRARIES})
+if(WITH_CUDA)
 add_dependencies(flashattn extern_flashattn)
+endif()
