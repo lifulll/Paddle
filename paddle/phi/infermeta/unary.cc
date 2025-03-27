@@ -5995,7 +5995,11 @@ void WeightQuantizeInferMeta(const MetaTensor& x,
   if (algo == "weight_only_int8" || algo == "llm.int8") {  // NOLINT
     dim_out = std::vector<int64_t>({x_dims[1], x_dims[0]});
   } else if (algo == "weight_only_int4") {
+#ifdef PADDLE_WITH_HIP
+    dim_out = std::vector<int64_t>({x_dims[1], x_dims[0] / 8});
+#else
     dim_out = std::vector<int64_t>({x_dims[1] / 2, x_dims[0]});
+#endif
   } else {
     PADDLE_THROW(common::errors::InvalidArgument(
         "The algo must be in ['weight_only_int8', 'weight_only_int4', "
@@ -6006,6 +6010,11 @@ void WeightQuantizeInferMeta(const MetaTensor& x,
 
   out->set_dtype(DataType::INT8);
 
+#ifdef PADDLE_WITH_HIP
+  if (algo == "weight_only_int4") {
+    out->set_dtype(DataType::INT32);
+  }
+#endif
   scale->set_dims(phi::make_ddim(dim_scale));
   scale->set_dtype(x.dtype());
 }

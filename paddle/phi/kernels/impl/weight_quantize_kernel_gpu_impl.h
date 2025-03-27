@@ -468,4 +468,96 @@ void weight_quant_gpu(const GPUContext& dev_ctx,
   }
 }
 
+#ifdef PADDLE_WITH_HIP
+template <typename T, int VectorSize = 8, typename ScaleT>
+__global__ void per_channel_quant_gpu_int4_col_pack_to_int32(const T* weight_data,
+                                                             int32_t* quanted_weight_data,
+                                                             ScaleT* scale_data,
+                                                             int total_k,
+                                                             int total_vec_n) {
+  phi::AlignedVector<int32_t, 8> order_map{0, 4, 1, 5, 2, 6, 3, 7};
+  int n = blockIdx.x * blockDim.x + threadIdx.x;
+  if (n < total_vec_n) {
+    const int4* vec_weight_data_ptr =
+        reinterpret_cast<const int4*>(weight_data);
+    int4* vec_quanted_weight_data =
+        reinterpret_cast<int4*>(quanted_weight_data);
+    phi::AlignedVector<float, VectorSize> abs_max;
+#pragma unroll
+    for (int i = 0; i < VectorSize; ++i) {
+      abs_max[i] = static_cast<float>(0.0f);
+    }
+#pragma unroll
+    for (int k = 0; k < total_k; ++k) {
+      int linear_index = k * total_vec_n + n;
+      phi::AlignedVector<T, VectorSize> weight;
+      *reinterpret_cast<int4*>(&weight) = vec_weight_data_ptr[linear_index];
+#pragma unroll
+      for (int i = 0; i < VectorSize; ++i) {
+        abs_max[i] = fmaxf((abs_max[i]), static_cast<float>(fabsf(weight[i])));
+      }
+    }
+    phi::AlignedVector<ScaleT, VectorSize> scale;
+#pragma unroll
+    for (int i = 0; i < VectorSize; ++i) {
+      scale[i] = static_cast<ScaleT>(abs_max[i] / static_cast<float>(7.0f));
+    }
+    *reinterpret_cast<float4*>(scale_data + VectorSize * n) =
+        *reinterpret_cast<float4*>(&scale);
+
+    for (int k = 0; k < total_k / 8; ++k) {
+      phi::AlignedVector<int32_t, VectorSize> quanted_weight;
+      for (int packed_idx = 0; packed_idx < 8; ++packed_idx) {
+        int linear_index = (k * 8 + packed_idx) * total_vec_n + n;
+        phi::AlignedVector<T, VectorSize> weight;
+        *reinterpret_cast<int4*>(&weight) =
+            *reinterpret_cast<const int4*>(vec_weight_data_ptr + linear_index);
+#pragma unroll
+        for (int i = 0; i < VectorSize; ++i) {
+          const float weight_elt = static_cast<float>(weight[i]) / static_cast<float>(scale[i]);
+          const float scaled_weight = roundf(weight_elt);
+          int int_weight = static_cast<int>(scaled_weight);
+          const int32_t clipped_weight = fmaxf(-7, fminf(7, int_weight)) + 8;
+          quanted_weight[i] &= ~(0x0F << (4 * order_map[packed_idx]));
+          quanted_weight[i] |= ((clipped_weight & 0x0F) << (4 * order_map[packed_idx]));
+        }
+      }
+      int linear_index_new = (k * total_vec_n + n) * 2;
+      *reinterpret_cast<int4*>(vec_quanted_weight_data + linear_index_new) =
+          *reinterpret_cast<int4*>(&quanted_weight);
+      *reinterpret_cast<int4*>(vec_quanted_weight_data + linear_index_new + 1) =
+          *reinterpret_cast<int4*>(&quanted_weight[4]);
+    }
+  }
+}
+
+template <typename T, typename GPUContext, typename ScaleT>
+void weight_quant_amd_gpu_int4(const GPUContext& dev_ctx,
+                               const T* weight_data,
+                               int32_t* quanted_weight_data,
+                               ScaleT* scale_data,
+                               const std::vector<int>& shape) {
+  int total_k = shape[0];
+  int total_n = shape[1];
+  constexpr int kBlockSize = 64;
+  constexpr int kVectorSize = 128 / sizeof(T) / 8;
+  PADDLE_ENFORCE_EQ(total_n % kVectorSize,
+                    0,
+                    common::errors::PreconditionNotMet(
+                        "Currently, weight_quant_gpu kernel only support n "
+                        "with multiple of %d, please use",
+                        kVectorSize));
+  int total_vec_n = total_n / kVectorSize;
+  int kGridSize =
+      max((total_vec_n + kBlockSize - 1) / kBlockSize, static_cast<int>(1));
+  per_channel_quant_gpu_int4_col_pack_to_int32<T, kVectorSize>
+          <<<kGridSize, kBlockSize>>>(weight_data,
+                                      quanted_weight_data,
+                                      scale_data,
+                                      total_k,
+                                      total_vec_n);
+
+}
+#endif
+
 }  // namespace phi

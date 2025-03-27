@@ -5527,6 +5527,7 @@ void WeightOnlyLinearInferMeta(const MetaTensor& x,
       common::errors::InvalidArgument(
           "The second dimension of input must be divisible by 16, but got[%d]",
           w_dims[1]));
+#ifndef PADDLE_WITH_HIP
   PADDLE_ENFORCE_EQ(
       x_dims[x_dims.size() - 1],
       w_dims[1],
@@ -5535,6 +5536,7 @@ void WeightOnlyLinearInferMeta(const MetaTensor& x,
           "But received Input(X) dim[-1](%s) != Input(Weight) dim[1](%s)",
           x_dims[x_dims.size() - 1],
           w_dims[1]));
+#endif
   if (bias.initialized()) {
     auto bias_dims = bias.dims();
     PADDLE_ENFORCE_EQ(

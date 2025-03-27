@@ -86,12 +86,21 @@ void WeightQuantizeKernel(const Context& dev_ctx,
                                 algo);
 #endif
   } else if (algo == "weight_only_int4") {
-#ifdef PADDLE_WITH_HIP
-    PADDLE_FATAL(
-        "Weight quant gpu kernel currently don't support weight_only_int4 "
-        "algo, please use cpu version.");
-#else
     dev_ctx.template Alloc<T>(scale);
+#ifdef PADDLE_WITH_HIP
+    dev_ctx.template Alloc<int32_t>(out);
+    DenseTensor quanted_w;
+    quanted_w.Resize({static_cast<int64_t>(m / 8), static_cast<int64_t>(n)});
+    dev_ctx.template Alloc<int32_t>(&quanted_w);
+    weight_quant_amd_gpu_int4<T, Context>(dev_ctx,
+                                          x.data<T>(),
+                                          quanted_w.data<int32_t>(),
+                                          scale->data<T>(),
+                                          weight_shape);
+    std::vector<int> axis = {1, 0};
+    funcs::Transpose<Context, int32_t, 2> trans;
+    trans(dev_ctx, quanted_w, out, axis);
+#else
     weight_quant_gpu<T, Context>(dev_ctx,
                                  x.data<T>(),
                                  quanted_x.data<int8_t>(),

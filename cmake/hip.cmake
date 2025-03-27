@@ -183,7 +183,7 @@ include(thrust)
 
 
 set(DCU_GEMM_LIB "extern_gemm")
-set(DCU_GEMM_LIB_NAME "libgemm_w4a16_awq${CMAKE_SHARED_LIBRARY_SUFFIX}")
+set(DCU_GEMM_LIB_NAME "libgemm_w4a16_baidu${CMAKE_SHARED_LIBRARY_SUFFIX}")
 set(DCU_GEMM_URL "https://ai-rank.bj.bcebos.com/DCU/${DCU_GEMM_LIB_NAME}")
 set(DCU_GEMM_INSTALL_DIR ${THIRD_PARTY_PATH}/install/hip_gemm)
 set(DCU_GEMM_SOURCE_DIR ${PADDLE_SOURCE_DIR}/third_party/hip_gemm)

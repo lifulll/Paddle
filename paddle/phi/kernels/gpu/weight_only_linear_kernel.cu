@@ -22,6 +22,7 @@ limitations under the License. */
 #endif
 
 #ifdef PADDLE_WITH_HIP
+#include "paddle/phi/kernels/funcs/math_function.h"
 #include "paddle/phi/kernels/gpu/gemm_w4a16.h"
 #endif
 
@@ -39,7 +40,6 @@ void WeightOnlyLinearKernel(const Context& dev_ctx,
                             DenseTensor* out) {
   dev_ctx.template Alloc<T>(out);
   const T* x_data = x.data<T>();
-  const int8_t* weight_data = weight.data<int8_t>();
   const T* bias_data = bias ? bias.get().data<T>() : nullptr;
   const T* weight_scale_data = weight_scale.data<T>();
   T* out_data = out->data<T>();
@@ -48,35 +48,42 @@ void WeightOnlyLinearKernel(const Context& dev_ctx,
   int n = group_size > 0 ? weight_scale.dims()[1] : weight_scale.dims()[0];
   int k = w_dims[1];
   int m = x.numel() / k;
+
 #ifdef PADDLE_WITH_HIP
   {
-    DenseTensor mixgemm_workspace;
-    int64_t mixgemm_workspace_size_bytes = get_w4a16_workspace_size(m, n);
-    mixgemm_workspace.Resize({mixgemm_workspace_size_bytes});
-    dev_ctx.template Alloc<uint8_t>(&mixgemm_workspace);
-    char* mixgemm_workspace_data =
-        reinterpret_cast<char*>(mixgemm_workspace.data<uint8_t>());
+    if (weight_dtype == "int4") {
+      const int32_t* weight_data = weight.data<int32_t>();
+      k = w_dims[1] * 8;
+      m = x.numel() / k;
+      DenseTensor mixgemm_workspace;
+      int64_t mixgemm_workspace_size_bytes = get_w4a16_workspace_size(m, n);
+      mixgemm_workspace.Resize({mixgemm_workspace_size_bytes});
+      dev_ctx.template Alloc<uint8_t>(&mixgemm_workspace);
+      phi::funcs::SetConstant<Context, uint8_t> set_zero;
+      set_zero(dev_ctx, &mixgemm_workspace, static_cast<uint8_t>(0));
+      char* mixgemm_workspace_data =
+          reinterpret_cast<char*>(mixgemm_workspace.data<uint8_t>());
 
-    gemm_w4a16(
-        reinterpret_cast<const typename PDDataTypeTraits<T>::DataType*>(x_data),
-        reinterpret_cast<const uint8_t*>(weight_data),
-        reinterpret_cast<const typename PDDataTypeTraits<T>::DataType*>(
-            weight_scale_data),
-        reinterpret_cast<typename PDDataTypeTraits<T>::DataType*>(out_data),
-        m,
-        n,
-        k,
-        k,
-        k,
-        n,
-        group_size,
-        mixgemm_workspace_data,
-        mixgemm_workspace_size_bytes,
-        dev_ctx.stream());
-    return;
+      gemm_w4a16(
+          reinterpret_cast<const typename PDDataTypeTraits<T>::DataType*>(x_data),
+          reinterpret_cast<const int32_t*>(weight_data),
+          reinterpret_cast<const typename PDDataTypeTraits<T>::DataType*>(
+              weight_scale_data),
+          reinterpret_cast<typename PDDataTypeTraits<T>::DataType*>(out_data),
+          m,
+          n,
+          k,
+          k,
+          k,
+          n,
+          group_size,
+          mixgemm_workspace_data,
+          mixgemm_workspace_size_bytes,
+          dev_ctx.stream());
+    }
   }
-#endif
-
+#else
+  const int8_t* weight_data = weight.data<int8_t>();
 #if defined(PADDLE_WITH_CUTLASS)
   PADDLE_ENFORCE_EQ(
       ((arch == 70) || (arch == 75) || (arch == 80) || (arch == 86) ||
@@ -230,6 +237,7 @@ we havenot support sm70 weightonly gemv, because sm70 weight layout is RowMajor.
           out->data<T>());
     }
   }
+#endif
 }
 }  // namespace phi
 
