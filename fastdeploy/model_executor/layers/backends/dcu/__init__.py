@@ -13,22 +13,9 @@
 # limitations under the License.
 
 """
-all backends methods
+xpu backend methods
 """
 
-from .xpu import *
-from .npu import *
-from .dcu import *
+from .fused_moe_triton_backends import DCUTritonWeightOnlyMoEMethod, DCUWeightOnlyLinearMethod
 
-__all__ = []
-from . import npu
-if hasattr(npu, '__all__'):
-    __all__.extend(npu.__all__)
-    
-from . import xpu
-if hasattr(xpu, '__all__'):
-    __all__.extend(xpu.__all__)
-
-from . import dcu
-if hasattr(dcu, '__all__'):
-    __all__.extend(dcu.__all__)
+__all__ = ['DCUTritonWeightOnlyMoEMethod', 'DCUWeightOnlyLinearMethod']

@@ -18,7 +18,7 @@ from abc import abstractmethod
 from typing import Optional
 
 import paddle
-from paddle.nn.quant import weight_only_linear, weight_quantize
+from paddle.nn.quant import weight_only_linear, weight_quantize, weight_dequantize
 
 from fastdeploy.platforms import current_platform
 
@@ -66,6 +66,15 @@ class WeightOnlyConfig(QuantConfigBase):
                 return XPUWeightOnlyMoEMethod(self)
             else:
                 return XPUWeightOnlyLinearMethod(self)
+        elif current_platform.is_dcu():
+            if isinstance(layer, FusedMoE):
+                from fastdeploy.model_executor.layers.backends import (
+                    DCUTritonWeightOnlyMoEMethod)
+                return DCUTritonWeightOnlyMoEMethod(self)
+            else:
+                from fastdeploy.model_executor.layers.backends import (
+                    DCUWeightOnlyLinearMethod)
+                return DCUWeightOnlyLinearMethod(self)
         else:
             if isinstance(layer, FusedMoE):
                 if layer.use_method == "cutlass":
@@ -201,3 +210,4 @@ class GPUWeightOnlyLinearMethod(WeightOnlyLinearMethod):
         layer.linear_weight.set_value(quanted_weight_tensor)
         layer.linear_weight_scale.set_value(
             weight_scale_tensor.astype(paddle.get_default_dtype()))
+

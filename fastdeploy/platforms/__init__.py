@@ -32,14 +32,14 @@ def __getattr__(name: str):
         # lazy init current_platform.
         global _current_platform
         if _current_platform is None:
-            if paddle.is_compiled_with_cuda():
+            if paddle.is_compiled_with_rocm():
+                _current_platform = DCUPlatform()
+            elif paddle.is_compiled_with_cuda():
                 _current_platform = CUDAPlatform()
             elif paddle.is_compiled_with_xpu():
                 _current_platform = XPUPlatform()
             elif paddle.is_compiled_with_custom_device("npu"):
                 _current_platform = NPUPlatform()
-            elif paddle.is_compiled_with_rocm():
-                _current_platform = DCUPlatform()
             else:
                 _current_platform = CPUPlatform()
         return _current_platform

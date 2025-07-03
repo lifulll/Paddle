@@ -247,6 +247,8 @@ class TritonWeightOnlyMoEMethod(QuantMethodBase):
 
         intermediate_cache3.reshape_([token_num, top_k, hidden_size])
         out = intermediate_cache3.sum(axis=1)
+        if layer.tp_size > 1:
+            tensor_model_parallel_all_reduce(out)
         return out
 
 
